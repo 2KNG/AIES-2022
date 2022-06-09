@@ -102,6 +102,10 @@ class HumanMachineSafety:
                 x2 = int(det.xmax * height)
                 y1 = int(det.ymin * height)
                 y2 = int(det.ymax * height)
+                if x1 < 0 :
+                    x1 = 0
+                if y1 < 0 :
+                    y1 = 0
                 objectCenterX = int((x1+x2)/2)
                 objectCenterY = int((y1+y2)/2)
                 cv2.line(frame, (centroidX, centroidY), (objectCenterX, objectCenterY), (50,220,100), 4)
