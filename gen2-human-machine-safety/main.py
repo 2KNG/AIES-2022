@@ -16,7 +16,7 @@ WARNING_DIST = 300
 # 위험 물체로 판단할 물체들
 DANGEROUS_OBJECTS = ["tvmonitor"]
 # 안전한 물체로 판단할 물체들
-SAFETY_OBJECTS = ["bottle"]
+SAFETY_OBJECTS = ["bottle", "person"]
 # 모바일넷 기반
 # MobilenetSSD label texts
 labelMap = ["background", "aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow",
@@ -94,7 +94,7 @@ class HumanMachineSafety:
 
         for det in detections:
             # Ignore detections that aren't considered dangerous
-            if labelMap[det.label] in DANGEROUS_OBJECTS:
+            if labelMap[det.label] in DANGEROUS_OBJECTS or labelMap[det.label] in SAFETY_OBJECTS:
                 self.distance = math.sqrt((det.spatialCoordinates.x-x)**2 + (det.spatialCoordinates.y-y)**2 + (det.spatialCoordinates.z-z)**2)
 
                 height = frame.shape[0]
@@ -102,6 +102,8 @@ class HumanMachineSafety:
                 x2 = int(det.xmax * height)
                 y1 = int(det.ymin * height)
                 y2 = int(det.ymax * height)
+
+                # 음수 값 발생으로 인한 NoneType 오류 개선
                 if x1 < 0 :
                     x1 = 0
                 if y1 < 0 :
@@ -110,50 +112,40 @@ class HumanMachineSafety:
                 objectCenterY = int((y1+y2)/2)
                 cv2.line(frame, (centroidX, centroidY), (objectCenterX, objectCenterY), (50,220,100), 4)
 
-                if self.distance < WARNING_DIST:
-                    # Color dangerous objects in red
-                    sub_img = frame[y1:y2, x1:x2]
-                    red_rect = np.ones(sub_img.shape, dtype=np.uint8) * 255
-                    # Setting blue/green to 0
-                    red_rect[:,:,0] = 0
-                    red_rect[:,:,1] = 0
-                    res = cv2.addWeighted(sub_img, 0.5, red_rect, 0.5, 1.0)
-                    # Putting the image back to its position
-                    frame[y1:y2, x1:x2] = res
-                    # Print twice to appear in bold
-                    annotate("Danger", (100, int(height/3)))
-                    annotate("Danger", (101, int(height/3)))
-            elif labelMap[det.label] in SAFETY_OBJECTS:
-                self.distance = math.sqrt((det.spatialCoordinates.x - x) ** 2 + (det.spatialCoordinates.y - y) ** 2 + (det.spatialCoordinates.z - z) ** 2)
+                if labelMap[det.label] in DANGEROUS_OBJECTS:
+                    if self.distance < WARNING_DIST:
+                        # Color dangerous objects in red
+                        sub_img = frame[y1:y2, x1:x2]
+                        red_rect = np.ones(sub_img.shape, dtype=np.uint8) * 255
+                        # Setting blue/green to 0
+                        red_rect[:,:,0] = 0
+                        red_rect[:,:,1] = 0
+                        res = cv2.addWeighted(sub_img, 0.5, red_rect, 0.5, 1.0)
+                        # Putting the image back to its position
+                        frame[y1:y2, x1:x2] = res
+                        # Print twice to appear in bold
+                        color = (0, 0, 255)
+                        annotate("Danger", (100, int(height/3)))
+                        annotate("Danger", (101, int(height/3)))
 
-                height = frame.shape[0]
-                x1 = int(det.xmin * height)
-                x2 = int(det.xmax * height)
-                y1 = int(det.ymin * height)
-                y2 = int(det.ymax * height)
-                objectCenterX = int((x1 + x2) / 2)
-
-
-                objectCenterY = int((y1 + y2) / 2)
-                cv2.line(frame, (centroidX, centroidY), (objectCenterX, objectCenterY), (50, 220, 100), 4)
-
-                if self.distance < WARNING_DIST:
-                    # Color dangerous objects in red
-                    sub_img = frame[y1:y2, x1:x2]
-                    blue_rect = np.ones(sub_img.shape, dtype=np.uint8) * 255
-                    # Setting blue/green to 0
-                    blue_rect[:, :, 1] = 0
-                    blue_rect[:, :, 2] = 0
-                    res = cv2.addWeighted(sub_img, 0.5, blue_rect, 0.5, 1.0)
-                    # Putting the image back to its position
-                    frame[y1:y2, x1:x2] = res
-                    # Print twice to appear in bold
-                    annotate("SAFETY", (100, int(height / 3)))
-                    annotate("SAFETY", (101, int(height / 3)))
+            # SAFETY_OBJECT 추가
+                elif labelMap[det.label] in SAFETY_OBJECTS:
+                    if self.distance < WARNING_DIST:
+                        # Color dangerous objects in red
+                        sub_img = frame[y1:y2, x1:x2]
+                        blue_rect = np.ones(sub_img.shape, dtype=np.uint8) * 255
+                        # Setting blue/green to 0
+                        blue_rect[:, :, 1] = 0
+                        blue_rect[:, :, 2] = 0
+                        res = cv2.addWeighted(sub_img, 0.5, blue_rect, 0.5, 1.0)
+                        # Putting the image back to its position
+                        frame[y1:y2, x1:x2] = res
+                        # Print twice to appear in bold
+                        color = (250, 0, 0)
+                        annotate("SAFETY", (100, int(height / 3)))
+                        annotate("SAFETY", (101, int(height / 3)))
             else:
                 continue
-
-
         cv2.imshow("color", frame)
 
     def draw_bbox(self, bbox, color):
@@ -173,16 +165,21 @@ class HumanMachineSafety:
         annotate = annotate_fun(frame, (0, 0, 25))
 
         for detection in detections:
-            if labelMap[detection.label] not in DANGEROUS_OBJECTS: continue
+            if labelMap[detection.label] not in DANGEROUS_OBJECTS and labelMap[detection.label] not in SAFETY_OBJECTS: continue
             height = frame.shape[0]
             width  = frame.shape[1]
             # Denormalize bounding box
+
             x1 = int(detection.xmin * width)
             x2 = int(detection.xmax * width)
             y1 = int(detection.ymin * height)
             y2 = int(detection.ymax * height)
             offsetX = x1 + 10
-            if not numpy.isnan(detection.spatialCoordinates.x):
+            if x1 < 0:
+                x1 = 0
+            if y1 < 0:
+                y1 = 0
+            if not np.isnan(detection.spatialCoordinates.x):
                 annotate("{:.2f}".format(detection.confidence*100), (offsetX, y1 + 35))
                 annotate(f"X: {int(detection.spatialCoordinates.x)} mm", (offsetX, y1 + 50))
                 annotate(f"Y: {int(detection.spatialCoordinates.y)} mm", (offsetX, y1 + 65))
