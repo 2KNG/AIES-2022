@@ -573,7 +573,11 @@ def recognize_gesture(hand):
     elif hand.thumb_state == 0 and hand.index_state == 1 and hand.middle_state == 0 and hand.ring_state == 0 and hand.little_state == 1:
         hand.gesture = "SNAIL"
     elif hand.thumb_state == 1 and hand.index_state == 0 and hand.middle_state == 0 and hand.ring_state == 0 and hand.little_state == 1:
-        hand.gesture = "약속해줘"
+        hand.gesture = "CALL_ME"
+    elif hand.thumb_state == 0 and hand.index_state == 0 and hand.middle_state == 0 and hand.ring_state == 0 and hand.little_state == 1:
+        hand.gesture = "PROMISE"
+    elif hand.thumb_state == 0 and hand.index_state == 0 and hand.middle_state == 1 and hand.ring_state == 0 and hand.little_state == 0:
+        hand.gesture = "abcdefu"
     else:
         hand.gesture = None
 

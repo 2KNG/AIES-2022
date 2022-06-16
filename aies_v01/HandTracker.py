@@ -444,8 +444,10 @@ class HandTracker:
         return dai.Rect(rect_center, rect_size)
 
     def spatial_loc_roi_from_wrist_landmark(self, hand):
-        zone_size = max(int(hand.rect_w_a / 10), 8)
-        rect_center = dai.Point2f(*(hand.landmarks[0]-np.array((zone_size//2 - self.crop_w, zone_size//2 + self.pad_h))))
+        # 검지기준 평가를 위한 코드
+        zone_size = max(int(hand.rect_w_a / 35), 8) # 정확도를 위해 10 -> 35로 변경
+        # 검지를 기준으로 거리를 받기위해 landmarks 설정
+        rect_center = dai.Point2f(*(hand.landmarks[8]-np.array((zone_size//2 - self.crop_w, zone_size//2 + self.pad_h))))
         rect_size = dai.Size2f(zone_size, zone_size)
         return dai.Rect(rect_center, rect_size)
 
@@ -632,7 +634,8 @@ class HandTracker:
 
         else: # not use_lm
             if self.xyz:
-                self.query_xyz(self.spatial_loc_roi_from_palm_center)
+                #수정
+                self.query_xyz(self.spatial_loc_roi_from_wrist_landmark)
 
         return video_frame, self.hands, bag
 
