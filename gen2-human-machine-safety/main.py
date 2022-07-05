@@ -251,7 +251,7 @@ cam = pipeline.create(dai.node.ColorCamera)
 cam.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
 cam.setIspScale(2, 3) # To match 720P mono cameras
 cam.setBoardSocket(dai.CameraBoardSocket.RGB)
-cam.initialControl.setManualFocus(130)
+cam.initialControl.setManualFocus(130)           # 왜 메뉴얼 포커스인지
 # For MobileNet NN
 cam.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
 cam.setPreviewSize(300, 300)
@@ -262,6 +262,8 @@ isp_xout.setStreamName("cam")
 cam.isp.link(isp_xout.input)
 
 print(f"Creating palm detection Neural Network...")
+
+# 손디텍 코드 넣는 부분
 model_nn = pipeline.create(dai.node.NeuralNetwork)
 model_nn.setBlobPath(str(Path("models/palm_detection_openvino_2021.3_6shave.blob").resolve().absolute()))
 model_nn.input.setBlocking(False)
@@ -293,6 +295,8 @@ stereo.setLeftRightCheck(True)
 stereo.setDepthAlign(dai.CameraBoardSocket.RGB)
 left.out.link(stereo.left)
 right.out.link(stereo.right)
+
+# 모바일넷 넣는 코드
 
 sdn = pipeline.create(dai.node.MobileNetSpatialDetectionNetwork)
 sdn.setBlobPath("models/mobilenet-ssd_openvino_2021.2_6shave.blob")
