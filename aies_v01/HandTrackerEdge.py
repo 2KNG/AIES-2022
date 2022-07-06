@@ -222,9 +222,14 @@ class HandTracker:
             self.q_video = self.device.getOutputQueue(name="cam_out", maxSize=1, blocking=False)
         self.q_manager_out = self.device.getOutputQueue(name="manager_out", maxSize=1, blocking=False)
         # For showing outputs of ImageManip nodes (debugging)
+        if self.xyz:
+            self.glob_spatial_rtrip_time = 0
+            self.nb_spatial_requests = 0
+            self.q_spatial_data = self.device.getOutputQueue(name="spatial_data_out", maxSize=4, blocking=False)
+            self.q_spatial_config = self.device.getInputQueue("spatial_calc_config_in")
         if self.trace & 4:
             self.q_pre_pd_manip_out = self.device.getOutputQueue(name="pre_pd_manip_out", maxSize=1, blocking=False)
-            self.q_pre_lm_manip_out = self.device.getOutputQueue(name="pre_lm_manip_out", maxSize=1, blocking=False)    
+            self.q_pre_lm_manip_out = self.device.getOutputQueue(name="pre_lm_manip_out", maxSize=1, blocking=False)
 
         self.fps = FPS()
 
@@ -309,7 +314,21 @@ class HandTracker:
             spatial_location_calculator.inputDepth.setQueueSize(1)
 
             left.out.link(stereo.left)
-            right.out.link(stereo.right)    
+            right.out.link(stereo.right)
+
+            # 추가
+
+            spatial_data_out = pipeline.createXLinkOut()
+            spatial_data_out.setStreamName("spatial_data_out")
+            spatial_data_out.input.setQueueSize(1)
+            spatial_data_out.input.setBlocking(False)
+
+            spatial_calc_config_in = pipeline.createXLinkIn()
+            spatial_calc_config_in.setStreamName("spatial_calc_config_in")
+
+            spatial_location_calculator.out.link(spatial_data_out.input)
+            spatial_calc_config_in.out.link(spatial_location_calculator.inputConfig)
+            # end
 
             stereo.depth.link(spatial_location_calculator.inputDepth)
 
@@ -377,8 +396,10 @@ class HandTracker:
         lm_nn.out.link(manager_script.inputs['from_lm_nn'])
             
         print("Pipeline created.")
-        return pipeline        
-    
+        return pipeline
+
+
+
     def build_manager_script(self):
         '''
         The code of the scripting node 'manager_script' depends on :
@@ -431,18 +452,31 @@ class HandTracker:
         hand.label = "right" if hand.handedness > 0.5 else "left"
         hand.norm_landmarks = np.array(res['rrn_lms'][hand_idx]).reshape(-1,3)
         hand.landmarks = (np.array(res["sqn_lms"][hand_idx]) * self.frame_size).reshape(-1,2).astype(np.int)
-        if self.xyz:
-            hand.xyz = np.array(res["xyz"][hand_idx])
-            hand.xyz_zone = res["xyz_zone"][hand_idx]
-        # If we added padding to make the image square, we need to remove this padding from landmark coordinates and from rect_points
-        if self.pad_h > 0:
-            hand.landmarks[:,1] -= self.pad_h
-            for i in range(len(hand.rect_points)):
-                hand.rect_points[i][1] -= self.pad_h
-        if self.pad_w > 0:
-            hand.landmarks[:,0] -= self.pad_w
-            for i in range(len(hand.rect_points)):
-                hand.rect_points[i][0] -= self.pad_w
+        #
+        # if self.xyz:
+        #     self.query_xyz(self.spatial_loc_roi_from_second_landmark)
+        # if self.xyz:
+        #     hand.xyz = np.array(res["xyz"][hand_idx])
+        #     print(np.array(res["xyz"][hand_idx]))
+        #     hand.xyz_zone = res["xyz_zone"][hand_idx]
+        #     # # 검지기준 평가를 위한 코드
+        #     zone_size = max(int(hand.rect_w_a / 35), 8)  # 정확도를 위해 10 -> 35로 변경
+        #     # 검지를 기준으로 거리를 받기위해 landmarks 설정
+        #     rect_center = dai.Point2f(
+        #         *(hand.landmarks[8] - np.array((zone_size // 2 - self.crop_w, zone_size // 2 + self.pad_h))))
+        #     rect_size = dai.Size2f(zone_size, zone_size)
+        #     print(hand.landmarks[8])
+        #     # # return dai.Rect(rect_center, rect_size)
+        #     #
+        # # If we added padding to make the image square, we need to remove this padding from landmark coordinates and from rect_points
+        # if self.pad_h > 0:
+        #     hand.landmarks[:,1] -= self.pad_h
+        #     for i in range(len(hand.rect_points)):
+        #         hand.rect_points[i][1] -= self.pad_h
+        # if self.pad_w > 0:
+        #     hand.landmarks[:,0] -= self.pad_w
+        #     for i in range(len(hand.rect_points)):
+        #         hand.rect_points[i][0] -= self.pad_w
 
         # World landmarks
         if self.use_world_landmarks:
@@ -452,6 +486,47 @@ class HandTracker:
 
         return hand
 
+
+    def spatial_loc_roi_from_second_landmark(self, hand):
+        # 검지기준 평가를 위한 코드
+        zone_size = max(int(hand.rect_w_a / 35), 8) # 정확도를 위해 10 -> 35로 변경
+        # 검지를 기준으로 거리를 받기위해 landmarks 설정
+        rect_center = dai.Point2f(*(hand.landmarks[8]-np.array((zone_size//2 - self.crop_w, zone_size//2 + self.pad_h))))
+        rect_size = dai.Size2f(zone_size, zone_size)
+        return dai.Rect(rect_center, rect_size)
+
+    def query_xyz(self, spatial_loc_roi_func):
+        conf_datas = []
+        for h in self.hands:
+            conf_data = dai.SpatialLocationCalculatorConfigData()
+            conf_data.depthThresholds.lowerThreshold = 100
+            conf_data.depthThresholds.upperThreshold = 10000
+            conf_data.roi = spatial_loc_roi_func(h)
+            conf_datas.append(conf_data)
+        if len(conf_datas) > 0:
+            cfg = dai.SpatialLocationCalculatorConfig()
+            cfg.setROIs(conf_datas)
+
+            spatial_rtrip_time = now()
+            self.q_spatial_config.send(cfg)
+
+            # Receives spatial locations
+            spatial_data = self.q_spatial_data.get().getSpatialLocations()
+            self.glob_spatial_rtrip_time += now() - spatial_rtrip_time
+            self.nb_spatial_requests += 1
+            for i, sd in enumerate(spatial_data):
+                self.hands[i].xyz_zone = [
+                    int(sd.config.roi.topLeft().x) - self.crop_w,
+                    int(sd.config.roi.topLeft().y),
+                    int(sd.config.roi.bottomRight().x) - self.crop_w,
+                    int(sd.config.roi.bottomRight().y)
+                ]
+                self.hands[i].xyz = np.array([
+                    sd.spatialCoordinates.x,
+                    sd.spatialCoordinates.y,
+                    sd.spatialCoordinates.z
+                ])
+
     def next_frame(self):
 
         self.fps.update()
@@ -460,7 +535,8 @@ class HandTracker:
             video_frame = np.zeros((self.img_h, self.img_w, 3), dtype=np.uint8)
         else:
             in_video = self.q_video.get()
-            video_frame = in_video.getCvFrame()       
+            video_frame = in_video.getCvFrame()
+
 
         # For debugging
         if self.trace & 4:
@@ -475,10 +551,10 @@ class HandTracker:
 
         # Get result from device
         res = marshal.loads(self.q_manager_out.get().getData())
-        hands = []
+        self.hands = []
         for i in range(len(res.get("lm_score",[]))):
             hand = self.extract_hand_data(res, i)
-            hands.append(hand)
+            self.hands.append(hand)
 
         # Statistics
         if self.stats:
@@ -492,9 +568,12 @@ class HandTracker:
             else:
                 self.nb_frames_lm_inference += 1
                 self.nb_lm_inferences += res["nb_lm_inf"]
-                self.nb_failed_lm_inferences += res["nb_lm_inf"] - len(hands)
+                self.nb_failed_lm_inferences += res["nb_lm_inf"] - len(self.hands)
 
-        return video_frame, hands, None
+        if self.xyz:
+            self.query_xyz(self.spatial_loc_roi_from_second_landmark)
+
+        return video_frame, self.hands, None
 
 
     def exit(self):
