@@ -16,16 +16,8 @@ monitor = get_monitors()[0]
 
 from interpreter import InterpreterHelper
 #
-# ip = "000.000.000.000"
-#
-# ur_itp = InterpreterHelper(ip)
-# if ur_itp.connect():
-#     print("{} 연결완료".format(ip))
-# if ur_itp.execute_command("clear_interpreter()"):
-#     print("인터프리터 버퍼 초기화")
-
 print(README)
-
+from HandTracker import HandTracker
 from HandController import HandController
 from interpreter import InterpreterHelper
 
@@ -133,12 +125,53 @@ smooth = DoubleExpFilter(smoothing=0.3, prediction=0.1, jitter_radius=700, out_i
 # Camera image size
 cam_width = 1152
 cam_height = 648
+#
+#
+# default_x = 0
+# default_y = 0
+# default_z = 0
+#
+# default_axis = [0.13, -0.400, 0.35, 0, 2.222, -2.222]
+# default_axis_s = "p[0.13, -0.400, 0.35, 0, 2.222, -2.222]"
+
+#
+# ip = "192.168.213.80"
+#
+# ur_itp = InterpreterHelper(ip)
+# if ur_itp.connect():
+#     print("{} 연결완료".format(ip))
+# if ur_itp.execute_command("clear_interpreter()"):
+#     print("인터프리터 버퍼 초기화")
+
+# command_id = ur_itp.execute_command("movej({})".format(default_axis_s))
 
 
 def move(event):
+
+    # global default_x
+    # global default_y
+    # global default_z
+    _, _, z = event.hand.xyz
+    x, y = event.hand.landmarks[8]
+    # if x != 0 and y != 0 and z != 0 and z < 1000:
+    #     move_x = (int(x) - cam_width/2)/1000
+    #     move_y = (int(y) - cam_height/2)/1000
+    #     move_z = int(z)/1000
+    #
+    #     command_line = "movej(p[{x},{y},{z},0,-3.14,0)".format(x=move_x, y=move_y, z=move_z)
+    #     ur_itp.execute_command(command_line)
+            # ur_itp.execute_command("clear_interpreter()")
+            # command_id = ur_itp.execute_command(command_line)
+    #     else:
+    #         default_x = x
+    #         default_y = y
+    #         default_z = z
+    #
+    # print(default_x, default_y, default_z)
+    print(x, y, z)
     # Use location of index
     x, y = event.hand.landmarks[8,:2]
-    print(x, y)
+    # print(x, y)
     # x /= cam_width
     # x = 1 - x
     # y /= cam_height
@@ -157,26 +190,75 @@ def move(event):
     # command_id = ur_itp.execute_command(command_line)
 
 def press_release(event):
-    if event.trigger == "enter": 
-        mouse.press(Button.left)
-    elif event.trigger == "leave":
-        mouse.release(Button.left)
+    pass
+    # if event.trigger == "enter":
+    #     mouse.press(Button.left)
+    # elif event.trigger == "leave":
+    #     mouse.release(Button.left)
 
 def click(event):
-    mouse.press(Button.left)
-    mouse.release(Button.left)
+    pass
+    # mouse.press(Button.left)
+    # mouse.release(Button.left)
 
 def rock_n_roll(event):
     print("로큰롤!!!")
+
+
+
+def touch(event):
+        # global default_x
+        # global default_y
+        # global default_z
+    _, _, z = event.hand.xyz
+    x, y = event.hand.landmarks[8]
+    if x != 0 and y != 0 and z != 0 and z < 1000:
+        move_x = int(x) / 1000 - cam_width / 2
+        move_y = int(y) / 1000 - cam_height / 2
+        move_z = int(z) / 1000
+        #
+        # print(ur_itp.execute_command("movej(p[{x}, {y}, {z}, 0, -3.141592, 0)"))
+
+
+    # global x
+    # global y
+    # global z
+    # if x + y + z == 0 :
+    #     x, y, z = event.hand.xyz
+    #     default_x = x
+    #     default_y = y
+    #     default_z = z
+    # move_x = default_x + x
+    # move_x = default_y + y
+    # move_x = default_z + z
+
+
+    # print(event.hand.xyz)
+    # print(event.hand.distance)
+
+    pass
+
+#
+# def idk_trigger(event):
+#     h = HandController()
+#     h.config['tracker']['args']['nn_detection'] = False
+#
+# def ok_trigger(event):
+#     h = HandController()
+#     h.config['tracker']['args']['nn_detection'] = True
 
 config = {
     'renderer' : {'enable': True},
     
     'pose_actions' : [
 
-        {'name': 'MOVE', 'pose':['ONE','TWO'], 'callback': 'move', "trigger":"continuous", "first_trigger_delay":0.1,},
-        {'name': 'CLICK', 'pose':'TWO', 'callback': 'press_release', "trigger":"enter_leave", "first_trigger_delay":0.1},
-        {'name': 'ROCK', 'pose':'ROCK_N_ROLL', 'callback': 'rock_n_roll', "trigger":"continuous", "first_trigger_delay":1, "next_trigger_delay": 1},
+        {'name': 'MOVE', 'pose':['ONE','TWO'], 'callback': 'move', "trigger":"periodic", "first_trigger_delay":0.1, "next_trigger_delay": 0.5},
+        # {'name': 'CLICK', 'pose':'TWO', 'callback': 'press_release', "trigger":"enter_leave", "first_trigger_delay":0.1},
+        {'name': 'TOUCH', 'pose':'FIVE', 'callback': 'touch', "trigger":"periodic", "first_trigger_delay":0.1, "next_trigger_delay": 1},
+        # {'name': 'FIVE', 'pose':'SNAIL', 'callback': 'idk_trigger', "trigger":"enter", "first_trigger_delay":1, "next_trigger_delay": 1},
+        # {'name': 'ROCK', 'pose':'SNAIL', 'callback': 'idk_trigger', "trigger":"enter", "first_trigger_delay":1, "next_trigger_delay": 1},
+        # {'name': 'ROCK', 'pose': 'PROMISE', 'callback': 'ok_trigger', "trigger": "enter",
+        #  "first_trigger_delay": 1, "next_trigger_delay": 1},
     ]
 }
 

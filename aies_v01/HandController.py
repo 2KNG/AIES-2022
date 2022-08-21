@@ -26,12 +26,14 @@ DEFAULT_CONFIG = {
         {
             'pd_score_thresh': 0.6,
             'pd_nms_thresh': 0.3,
-            'lm_score_thresh': 0.5, 
+            'lm_score_thresh': 0.5,
+            'use_world_landmarks': True,               # 추가
             'solo': True,
             'internal_fps': 30,
             'internal_frame_height': 640,
             'use_gesture': True,
-            'xyz': True
+            'xyz': True,
+            'nn_detection': True
         },
     },
 
@@ -153,7 +155,6 @@ class HandController:
         self.config['tracker']['args']['use_gesture'] = True
         # Init tracker
         self.tracker = HandTracker(**self.config['tracker']['args'])
-
         # Renderer
         self.use_renderer = self.config['renderer']['enable']
         if self.use_renderer:
@@ -269,6 +270,7 @@ class HandController:
         while True:
             self.now = monotonic()
             frame, hands, bag = self.tracker.next_frame()
+            # distance = self.tracker.get_distance()
             if frame is None: break
             self.frame_nb += 1
             events = self.generate_events(hands)

@@ -1,3 +1,4 @@
+import math
 import numpy as np
 from collections import namedtuple
 import mediapipe_utils as mpu
@@ -15,6 +16,33 @@ PALM_DETECTION_MODEL = str(SCRIPT_DIR / "models/palm_detection_sh4.blob")
 LANDMARK_MODEL_FULL = str(SCRIPT_DIR / "models/hand_landmark_full_sh4.blob")
 LANDMARK_MODEL_LITE = str(SCRIPT_DIR / "models/hand_landmark_lite_sh4.blob")
 LANDMARK_MODEL_SPARSE = str(SCRIPT_DIR / "models/hand_landmark_sparse_sh4.blob")
+
+DEPTH_THRESH_HIGH = 3000                        # 조절 시 프레임 소폭 상승
+DEPTH_THRESH_LOW = 100
+WARNING_DIST = 200
+
+
+# 위험 물체로 판단할 물체들
+DANGEROUS_OBJECTS = ["car"]
+# 안전한 물체로 판단할 물체들
+SAFETY_OBJECTS = ["bottle", "dog"]
+# MobilenetSSD label texts
+labelMap = ["background", "aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow",
+            "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"]
+
+
+def crop_to_rect(frame):
+    height = frame.shape[0]
+    width  = frame.shape[1]
+    delta = int((width-height) / 2)
+    # print(height, width, delta)
+    return frame[0:height, delta:width-delta]
+
+
+def annotate_fun(img, color, fontFace=cv2.FONT_ITALIC, fontScale=0.5, **kwargs):
+    def fun(text, pos):
+        cv2.putText(img, text, pos, fontFace, fontScale, color, **kwargs)
+    return fun
 
 def to_planar(arr: np.ndarray, shape: tuple) -> np.ndarray:
     return cv2.resize(arr, shape).transpose(2, 0, 1)#.flatten()
@@ -83,7 +111,8 @@ class HandTracker:
                 single_hand_tolerance_thresh=10,
                 lm_nb_threads=2,
                 stats=False,
-                trace=0, 
+                trace=0,
+                nn_detection=False,
                 ):
 
         self.pd_model = pd_model
@@ -126,6 +155,8 @@ class HandTracker:
         self.use_gesture = use_gesture
         self.use_handedness_average = use_handedness_average
         self.single_hand_tolerance_thresh = single_hand_tolerance_thresh
+        self.nn_detection = nn_detection
+        self.distance = 1000
 
         self.device = dai.Device()
 
@@ -283,7 +314,20 @@ class HandTracker:
             manip.inputImage.setQueueSize(1)
             manip.inputImage.setBlocking(False)
             cam.preview.link(manip.inputImage)
-            if self.crop:
+
+            if self.nn_detection:
+                cam.setVideoSize(self.img_w, self.img_h)
+                # cam.setPreviewSize(self.img_w, self.img_h)
+                cam.setPreviewSize(300, 300)
+                cam.setInterleaved(False)
+
+                # 하단 코드 정리하면 5프레임 확보
+                # isp_xout = pipeline.create(dai.node.XLinkOut)
+                # isp_xout.setStreamName("cam")
+                # cam.isp.link(isp_xout.input)
+
+
+            elif self.crop:
                 cam.setVideoSize(self.frame_size, self.frame_size)
                 cam.setPreviewSize(self.pd_input_length, self.pd_input_length)
                 
@@ -348,6 +392,29 @@ class HandTracker:
 
                 spatial_location_calculator.out.link(spatial_data_out.input)
                 spatial_calc_config_in.out.link(spatial_location_calculator.inputConfig)
+
+            if self.nn_detection:
+                print("디텍션 수행합니당")
+                sdn = pipeline.create(dai.node.MobileNetSpatialDetectionNetwork)
+                sdn.setBlobPath("models/mobilenet-ssd_openvino_2021.2_6shave.blob")
+                sdn.setConfidenceThreshold(0.5)
+                sdn.input.setBlocking(False)
+
+                sdn.setBoundingBoxScaleFactor(0.2)
+                sdn.setDepthLowerThreshold(DEPTH_THRESH_LOW)
+                sdn.setDepthUpperThreshold(DEPTH_THRESH_HIGH)
+
+                cam.preview.link(sdn.input)
+                stereo.depth.link(sdn.inputDepth)
+
+                sdn_out = pipeline.create(dai.node.XLinkOut)
+                sdn_out.setStreamName("det")
+                sdn.out.link(sdn_out.input)
+
+                depth_out = pipeline.create(dai.node.XLinkOut)
+                depth_out.setStreamName("depth")
+                sdn.passthroughDepth.link(depth_out.input)
+                print("여기까진 성공")
 
         # Define palm detection model
         print("Creating Palm Detection Neural Network...")
@@ -456,7 +523,7 @@ class HandTracker:
         for h in self.hands:
             conf_data = dai.SpatialLocationCalculatorConfigData()
             conf_data.depthThresholds.lowerThreshold = 100
-            conf_data.depthThresholds.upperThreshold = 10000
+            conf_data.depthThresholds.upperThreshold = 3000
             conf_data.roi = spatial_loc_roi_func(h)
             conf_datas.append(conf_data)
         if len(conf_datas) > 0:
@@ -482,6 +549,122 @@ class HandTracker:
                     sd.spatialCoordinates.y,
                     sd.spatialCoordinates.z
                     ])
+
+    def draw_detections(self, frame, detections):
+        color = (255,255,0)
+        annotate = annotate_fun(frame, (0, 0, 255))
+
+        for detection in detections:
+            if labelMap[detection.label] not in DANGEROUS_OBJECTS and labelMap[detection.label] not in SAFETY_OBJECTS: continue
+            height = frame.shape[0]
+            width  = frame.shape[1]
+            print(frame.shape)
+            # Denormalize bounding box
+            print(detection.xmin)
+            print(detection.xmax)
+            print(detection.ymin)
+            print(detection.ymax)
+            x1 = int(detection.xmin * height)
+            x2 = int(detection.xmax * height)
+            x1 = int(x1 + (width - height) / 2)
+            x2 = int(x2 + (width - height) / 2)
+
+            # x1 = int(x1 + x1*(width-height)/height)
+            # x2 = int(x2 + x2*(width-height)/height)
+            y1 = int(detection.ymin * height)
+            y2 = int(detection.ymax * height)
+            offsetX = x1 + 10
+            # if x1 < 0:
+            #     x1 = 0
+            # if y1 < 0:
+            #     y1 = 0
+            x1 = int(x1)
+            y1 = int(y1)
+            if not np.isnan(detection.spatialCoordinates.x):
+                annotate("{:.2f}".format(detection.confidence*100), (offsetX, y1 + 35))
+                annotate(f"X: {int(detection.spatialCoordinates.x)} mm", (offsetX, y1 + 50))
+                annotate(f"Y: {int(detection.spatialCoordinates.y)} mm", (offsetX, y1 + 65))
+                annotate(f"Z: {int(detection.spatialCoordinates.z)} mm", (offsetX, y1 + 80))
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, cv2.FONT_HERSHEY_SIMPLEX)
+            try:
+                label = labelMap[detection.label]
+            except:
+                label = detection.label
+
+            annotate(str(label), (offsetX, y1 + 20))
+
+
+    def calc_spatial_distance(self, hand, frame, detections):
+
+        annotate = annotate_fun(frame, (0, 0, 255), fontScale=1.7)
+        x, y, z = hand.xyz
+        # print(hand.xyz)
+        # print(x, y, z)
+
+        for det in detections:
+            # Ignore detections that aren't considered dangerous
+            if labelMap[det.label] in DANGEROUS_OBJECTS or labelMap[det.label] in SAFETY_OBJECTS:
+                self.distance = math.sqrt((det.spatialCoordinates.x-x)**2 + (det.spatialCoordinates.y-y)**2 + (det.spatialCoordinates.z-z)**2)
+                print(det.spatialCoordinates)
+
+                height = frame.shape[0]
+                width = frame.shape[1]
+
+                x1 = int(det.xmin * height)
+                x2 = int(det.xmax * height)
+                x1 = int(x1 + (width-height)/2)
+                x2 = int(x2 + (width-height)/2)
+                # x1 = int(x1 + x1*(width-height)/height)
+                # x2 = int(x2 + x2*(width-height)/height)
+                y1 = int(det.ymin * height)
+                y2 = int(det.ymax * height)
+
+                # 음수 값 발생으로 인한
+                # NoneType 오류 개선
+                # if x1 < 0 :
+                #     x1 = 0
+                # if y1 < 0 :
+                #     y1 = 0
+                objectCenterX = int((x1+x2)/2)
+                objectCenterY = int((y1+y2)/2)
+                cv2.line(frame, (hand.landmarks[8,0], hand.landmarks[8,1]), (objectCenterX, objectCenterY), (50,220,100), 4)
+
+                if labelMap[det.label] in DANGEROUS_OBJECTS:
+                    if self.distance < WARNING_DIST:
+                        # Color dangerous objects in red
+                        sub_img = frame[y1:y2, x1:x2]
+                        red_rect = np.ones(sub_img.shape, dtype=np.uint8) * 255
+                        # Setting blue/green to 0
+                        red_rect[:,:,0] = 0
+                        red_rect[:,:,1] = 0
+                        res = cv2.addWeighted(sub_img, 0.5, red_rect, 0.5, 1.0)
+                        # Putting the image back to its position
+                        frame[y1:y2, x1:x2] = res
+                        # Print twice to appear in bold
+                        color = (0, 0, 255)
+                        annotate("Danger", (100, int(height/3)))
+                        annotate("Danger", (101, int(height/3)))
+
+            # SAFETY_OBJECT 추가
+                elif labelMap[det.label] in SAFETY_OBJECTS:
+                    if self.distance < WARNING_DIST:
+                        # Color dangerous objects in red
+                        sub_img = frame[y1:y2, x1:x2]
+                        blue_rect = np.ones(sub_img.shape, dtype=np.uint8) * 255
+                        # Setting blue/green to 0
+                        blue_rect[:, :, 1] = 0
+                        blue_rect[:, :, 2] = 0
+                        res = cv2.addWeighted(sub_img, 0.5, blue_rect, 0.5, 1.0)
+                        # Putting the image back to its position
+                        frame[y1:y2, x1:x2] = res
+                        # Print twice to appear in bold
+                        color = (250, 0, 0)
+                        annotate("SAFETY", (100, int(height / 3)))
+                        annotate("SAFETY", (101, int(height / 3)))
+            else:
+                continue
+        # cv2.imshow("HandTracking", frame)
+
 
     def next_frame(self):
         hand_label = None
@@ -637,7 +820,61 @@ class HandTracker:
                 #수정
                 self.query_xyz(self.spatial_loc_roi_from_wrist_landmark)
 
+        if self.nn_detection:
+
+            detections = []
+            depthFrame = None
+            depthFrameColor = None
+            frame = None
+            # video_frame = crop_to_rect(video_frame)
+
+            vidQ = self.device.getOutputQueue(name="cam_out", maxSize=4, blocking=False)
+            detQ = self.device.getOutputQueue(name="det", maxSize=4, blocking=False)
+            depthQ = self.device.getOutputQueue(name="depth", maxSize=4, blocking=False)
+
+            in_rgb = vidQ.tryGet()
+            if in_rgb is not None:
+                frame = crop_to_rect(in_rgb.getCvFrame())
+
+            # Check for mobilenet detections
+            in_det = detQ.tryGet()
+            if in_det is not None:
+                detections = in_det.detections
+
+            in_depth = depthQ.tryGet()
+            if in_depth is not None:
+                depthFrame = crop_to_rect(in_depth.getFrame())
+                depthFrame = in_depth.getFrame()
+                depthFrameColor = cv2.normalize(depthFrame, None, 255, 0, cv2.NORM_INF, cv2.CV_8UC1)
+                depthFrameColor = cv2.equalizeHist(depthFrameColor)
+                depthFrameColor = cv2.applyColorMap(depthFrameColor, cv2.COLORMAP_JET)
+
+            if video_frame is not None and depthFrame is not None:
+                try:
+                    annotate = annotate_fun(video_frame, (50, 220, 110), fontScale=1.4)
+                    if self.hands:
+                        for hand in self.hands:
+                            self.calc_spatial_distance(hand, video_frame, detections)
+                            hand.distance = self.distance
+                    self.draw_detections(video_frame, detections)
+
+                    # Put text 3 times for the bold appearance
+                    annotate(f"Distance: {int(self.distance)} mm", (50,600))
+                    annotate(f"Distance: {int(self.distance)} mm", (51,600))
+                    annotate(f"Distance: {int(self.distance)} mm", (52,600))
+                    # cv2.imshow("HandTracking", video_frame)
+
+
+                    if depthFrameColor is not None:
+                        self.draw_detections(depthFrameColor, detections)
+                        cv2.imshow("depth", depthFrameColor)
+                except StopIteration:
+                    pass
+
         return video_frame, self.hands, bag
+
+    def get_distance(self):
+        return self.distance
 
     def exit(self):
         self.device.close()
